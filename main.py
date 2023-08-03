@@ -23,37 +23,47 @@ async def root():
 
 
 @app.post("/uploadfiles")
-async def create_upload_files(files: List[UploadFile] = File(...)):
-    all_results = {}
-    total_results = {}
-    
-    for file in files:
-        # Load the Excel file
-        df = pd.read_excel(BytesIO(await file.read()))
+async def create_upload_file(file: UploadFile = File(...)):
+    # Read the data from the uploaded file
+    df = pd.read_excel(BytesIO(await file.read()))
 
-        # Group by manager name and sum expenses
-        manager_expenses = df.groupby('Employee/Appl.Name')['ValCOArCur'].sum()
+    # Convert 'Doc. Date' to datetime format and extract the month
+    df['Doc. Date'] = pd.to_datetime(df['Doc. Date'], format='%Y%m%d')
+    df['Month'] = df['Doc. Date'].dt.month
 
-        # valCoArCur should have 2 decimal places, even if integer
-        manager_expenses = manager_expenses.sort_values(ascending=False)
-        manager_expenses = manager_expenses.apply(lambda x: '{:.2f}'.format(x))
+    # Separate the data into two dataframes: one for employees and one for vendors
+    df_employee = df[df['Employee/Appl.Name'].notna()]
+    df_vendor = df[df['Vendor Name'].notna()]
 
-        # Convert the result to a dictionary and store it in all_results
-        all_results[file.filename] = manager_expenses.to_dict()
-        
-        # add to total result for each manager
-        for manager, expense in manager_expenses.items():
- 
-            if manager in total_results:
-                total_results[manager] += float(expense)
-            else:
-                total_results[manager] = float(expense)
+    # Group the data by year, name, and month, and sum the expenses for each group
+    employee_expenses = df_employee.groupby(['Year', 'Employee/Appl.Name', 'Month'])['ValCOArCur'].sum().reset_index()
+    vendor_expenses = df_vendor.groupby(['Year', 'Vendor Name', 'Month'])['ValCOArCur'].sum().reset_index()
 
-    
-    # make all values in total_results have 2 decimal places
-    total_results = {k: '{:.2f}'.format(v) for k, v in total_results.items()}
+    # Pivot the data and add a column for the total expenses for the year
+    employee_expenses_pivot = employee_expenses.pivot_table(values='ValCOArCur', index=['Year', 'Employee/Appl.Name'], columns='Month', fill_value=0)
+    vendor_expenses_pivot = vendor_expenses.pivot_table(values='ValCOArCur', index=['Year', 'Vendor Name'], columns='Month', fill_value=0)
+    employee_expenses_pivot['Total'] = employee_expenses_pivot.sum(axis=1)
+    vendor_expenses_pivot['Total'] = vendor_expenses_pivot.sum(axis=1)
 
-    return {"all_results": all_results, "total_results": total_results}
+    # Convert the dataframes to dictionaries grouped by year
+    employee_expenses_dict = employee_expenses_pivot.reset_index().groupby('Year').apply(lambda x: x.set_index('Employee/Appl.Name').drop(columns='Year').to_dict(orient='index')).to_dict()
+    vendor_expenses_dict = vendor_expenses_pivot.reset_index().groupby('Year').apply(lambda x: x.set_index('Vendor Name').drop(columns='Year').to_dict(orient='index')).to_dict()
+
+    # Combine the employee and vendor expenses for each year
+    expenses = {year: {'employee_expenses': employee_expenses_dict.get(year, {}), 'vendor_expenses': vendor_expenses_dict.get(year, {})} for year in set(employee_expenses_dict) | set(vendor_expenses_dict)}
+
+    # 2 decimal places for all values of the dictionary
+    for year in expenses:
+        for name in expenses[year]['employee_expenses']:
+            for month in expenses[year]['employee_expenses'][name]:
+                expenses[year]['employee_expenses'][name][month] = '{:.2f}'.format(expenses[year]['employee_expenses'][name][month])
+
+        for name in expenses[year]['vendor_expenses']:
+            for month in expenses[year]['vendor_expenses'][name]:
+                expenses[year]['vendor_expenses'][name][month] = '{:.2f}'.format(expenses[year]['vendor_expenses'][name][month])
+    return expenses
+
+
 
 @app.post("/uploadfiles2")
 async def create_upload_files2(files: List[UploadFile] = File(...)):
