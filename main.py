@@ -30,7 +30,7 @@ async def create_upload_file(file: UploadFile = File(...)):
     # Convert 'Doc. Date' to datetime format and extract the month
     df['Doc. Date'] = pd.to_datetime(df['Doc. Date'], format='%Y%m%d')
     df['Month'] = df['Doc. Date'].dt.month
-
+    df['Year'] = df['Doc. Date'].dt.year
     # Separate the data into two dataframes: one for employees and one for vendors
     df_employee = df[df['Employee/Appl.Name'].notna()]
     df_vendor = df[df['Vendor Name'].notna()]
